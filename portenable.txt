@@ -1,0 +1,9 @@
+firewall-cmd --list-ports
+firewall-cmd --get-zones
+firewall-cmd --get-zone-of-interface=eth0
+
+firewall-cmd --add-port 1191/tcp
+firewall-cmd --permanent --add-port 1191/tcp
+firewall-cmd --permanent --add-port 60000-61000/tcp
+systemctl stop firewalld 
+systemctl start firewalld

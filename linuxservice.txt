@@ -1,0 +1,22 @@
+[Unit]
+Description=Apache Iterable Web Application Container
+Wants=network.target
+After=network.target
+
+[Service]
+Type=simple
+
+WorkingDirectory=/opt/application-service/iterable-batch-integration
+
+ExecStart=sh /opt/application-service/iterable-batch-integration/startup.sh
+ExecStop=sh /opt/application-service/iterable-batch-integration/shutdown.sh
+SuccessExitStatus=143
+
+User=jvmapps
+Group=appmgr
+UMask=0007
+RestartSec=10
+Restart=always
+
+[Install]
+WantedBy=multi-user.target
