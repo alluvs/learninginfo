@@ -1,0 +1,21 @@
+FROM quay.io/americanfirstfinance/ubi8-minimal-nodejs:v16.14
+#FROM quay.io/americanfirstfinance/ubi8-minimal-nodejs:1.1 as builder
+#FROM quay.io/americanfirstfinance/ubi8-minimal-nodejs:2.7 as builder
+RUN mkdir /appdir
+ARG CONT_INST
+RUN echo $CONT_INST
+WORKDIR /appdir
+COPY . /appdir
+RUN npm ci
+RUN npm run ${CONT_INST}
+CMD chown -R nginx:nginx .
+
+#FROM affquay.americanfirstfinance.com/americanfirstfinance/ubi8-nginx:2.2
+##WORKDIR /usr/share/nginx/html
+#RUN rm -rf /usr/share/nginx/html/*
+#COPY --from=builder /app/corporate-website .
+#COPY --from=builder /app/nginx.conf /etc/nginx/nginx.conf
+#RUN microdnf update -y
+#EXPOSE 80
+#CMD ["nginx", "-g", "daemon off;"]
+

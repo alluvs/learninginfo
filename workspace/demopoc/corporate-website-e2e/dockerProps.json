@@ -1,0 +1,9 @@
+{
+    "c2s-signature-dev": "c2s:build:dev",
+    "c2s-signature-qa": "c2s:build:qa",
+    "c2s-signature-prod": "c2s:build:prod",
+    "corporate-website-dev": "build:dev:ssr",
+    "corporate-website-qa": "build:qa:ssr",
+    "corporate-website-uat": "build:uat:ssr",
+    "corporate-website-prod": "build:prod:ssr"
+}

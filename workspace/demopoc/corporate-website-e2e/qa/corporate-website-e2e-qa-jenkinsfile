@@ -1,0 +1,345 @@
+def COMMIT_MSGS = ''
+def LIST = ''
+def CONT_INST = ''
+def jobName = currentBuild.fullDisplayName
+def mailToRecipients = 'ckorvi@americanfirstfinance.com,apileggi@americanfirstfinance.com'
+def useremail='no-replyBuildRequest@americanfirstfinance.com'
+pipeline {
+    agent any
+    environment {
+		
+           
+
+            GIT_BRANCH         	      = 'main'
+            GIT_TAG                       =  "${BITBUCKET_TAG}"
+            NOTIFIERS                     = "${NOTIFIERS}" 
+            //APPROVERS                     = "${JENKINS_APPROVERS}"
+            JIRA_ID                       = "${JIRA_ID}"
+            APP_NAME                      = 'corporate website e2e'
+            ENV                           = 'QA'
+		BITBUCKET_CREDS			= 'svc_jenkins'
+		GIT_REPO_URL_APP			= 'git@bitbucket.org:americanfirstfinance/janet.git'
+		GIT_REPO_URL_DEVOPS         = 'git@bitbucket.org:americanfirstfinance/devopscode.git'
+            WORKSPACE				= pwd()
+		OCP_TOKEN			      = credentials('svc-jenkins-janet')
+            ACS_TOKEN			      = credentials('svc-acs-token')
+		NEXUS_CREDS			      = credentials('nexus-creds')
+		QUAY_CREDS				= credentials('kwiksign-roboaccount')
+		IMAGE_NAME				= 'janet'
+            IMAGE_TAG_NAME                = 'janet-qa-corporate-websitge-e2e'
+            IMAGE_REL_TAG_NAME            = 'janet-Release-qa-corporate-website-e2e'
+		couchDB_URL			      = 'https://cidb1.americanfirstfinance.com'
+		couch_api_svc			= 'janet'
+		couchDB_env			      = 'release'
+	}
+	 options {
+        
+        skipDefaultCheckout()
+        disableConcurrentBuilds()
+    }
+    stages {
+        stage("Build Parameters") {
+			steps {
+			     println "BRANCH NAME = ${env.GIT_BRANCH}"
+                       println "GIT TAG VALUE = ${env.GIT_TAG}"
+                       println "APPLICATION  = ${env.APP_NAME}"
+                       println "NOTIFIERS EMAILS = ${env.NOTIFIERS}"
+                       //println "APPROVERS LIST  = ${env.APPROVERS}"
+                       println "JIRA ID  = ${env.JIRA_ID}"
+                       println "ENVIRONMENT  = ${env.ENV}"
+                       script{
+                          jobname = "${JOB_NAME}"
+                          String notifiers_list = "${env.NOTIFIERS}"
+                          notifiers_list.replaceAll(",", ";")
+                          //String approvers_list = "${env.APPROVERS}"
+                          
+                          mailToRecipients  = notifiers_list
+                          //jenkins_approvers = approvers_list
+                          //echo "${mailToRecipients}"
+                          //echo "${jenkins_approvers}"
+                       }
+                   }
+	  }
+         stage('Notify') {
+    		steps{
+	    		script{
+					def userAborted = false
+					//emailext body: '''
+                              //    You are requested to approve the Jenkins Job : '${env.JOB_NAME} [${env.BUILD_NUMBER}] '. <br>
+					//    Please go to console output of <a href="${BUILD_URL}input">click to approve</a> input to approve or Reject.<br>
+					//''',    
+                              emailext body: '''
+                                  A jenkins job "{jobname}" is triggered for "${APP_NAME}" :: "${ENV}".<br>
+					''',
+					mimeType: 'text/html',
+					//subject: "[Jenkins] ${JOB_NAME} Build Approval Request",
+                              subject: "[Jenkins] ${JOB_NAME} is triggered",
+					from: "${useremail}",
+					to: "${mailToRecipients}",
+					recipientProviders: [[$class: 'CulpritsRecipientProvider']]
+                 }
+           }
+        }
+        stage("JIRA COMMENT - JOB START")
+        {
+            steps{
+               script {
+                    slackSend (color: '#FFFF00', message: "STARTED: \n JOB: '${env.JOB_NAME} [${env.BUILD_NUMBER}] ' \n APP: ${env.APP_NAME} \n ENV: ${env.ENV} \n TAG: ${env.GIT_TAG}  \n ${env.BUILD_URL} \n BRANCH = ${env.GIT_BRANCH} ")
+			
+
+                     withEnv(['JIRA_SITE=JIRA']) {
+                       def comment = [ body: "QA Build Started. '\n' APPLICATION = ${env.APP_NAME} '\n' ENVIRONMENT = ${env.ENV} '\n' BRANCH = ${env.GIT_BRANCH} '\n' TAG = ${env.GIT_TAG} '\n' NOTIFIER EMAILS =  ${env.NOTIFIERS} '\n' APPROVERS = ${env.APPROVERS} " ]
+                       def jiraid = "${env.JIRA_ID}"
+                       
+                       jiraAddComment idOrKey: jiraid , input: comment
+                    }
+               }
+            }
+        }
+
+        stage("Cleanup Workspace ") {
+			steps {
+			   println "${env.BRANCH_NAME}"
+                     //  println "${env.GIT_BRANCH}"
+                      // println "Branch Name"
+				cleanWs()
+				//clean up tmp directory
+				dir("${env.WORKSPACE}@tmp") {
+					deleteDir()
+				}
+				// clean up script directory
+				dir("${env.WORKSPACE}@script") {
+					deleteDir()
+				}
+				dir("${env.WORKSPACE}@script@tmp") {
+					deleteDir()
+				}
+				step([$class: 'WsCleanup'])
+			}
+		}
+        stage("Checkout the source code") {
+			steps {
+				slackSend (color: '#FFFF00', message: "STARTED: Job: '${env.JOB_NAME} [${env.BUILD_NUMBER}]', (${env.BUILD_URL})")
+				 dir ('app-code'){
+                         checkout([$class: 'GitSCM', 
+                                        branches: [[name: "refs/tags/${env.GIT_TAG}"]], 
+                                        doGenerateSubmoduleConfigurations: false, 
+                                        extensions: [[$class: 'SubmoduleOption', disableSubmodules: false, parentCredentials: false, recursiveSubmodules: false, reference: '', trackingSubmodules: false]], 
+                                        submoduleCfg: [], 
+                                        userRemoteConfigs: [[credentialsId: "${env.BITBUCKET_CREDS}", url: "${env.GIT_REPO_URL_APP}"]]
+                                     ])
+                         }
+                         dir ('devops-code'){
+                              git branch: 'master', credentialsId: "${env.BITBUCKET_CREDS}", url: "${env.GIT_REPO_URL_DEVOPS}"
+                         } 
+        	}
+        }
+      
+
+        stage("Read map parameters from JSON") {
+			 steps {
+			      script {
+
+           				   def props = readJSON file: './devops-code/janet/corporate-website-e2e/dockerProps.json'
+						  //  def key = "${env.INSTANCE}"
+                                       def key = 'corporate-website-e2e-qa'
+						   //println("Docker Variable ->  " + key)
+						   //println("Docker Variable ->  " + props[key])
+						    env.CONT_INST = props[key]
+                        }
+	   }
+												}
+
+        stage('Sonarqube') {
+           environment {
+                scannerHome = tool name: 'SonarQubeScanner' , type: 'hudson.plugins.sonar.SonarRunnerInstallation'
+           }
+           steps {
+              withSonarQubeEnv('sonarqube') {
+                sh "cp devops-code/janet/corporate-website-e2e/sonar-project.properties app-code/sonar-project.properties"
+                sh "cd app-code; ${scannerHome}/bin/sonar-scanner -Dsonar.branch.name=$GIT_BRANCH"
+			  }
+           }
+		}
+		stage('Quality gate') {
+			steps {
+				timeout(time: 1, unit: 'HOURS') { // Just in case something goes wrong, pipeline will be killed after a timeout
+					waitForQualityGate abortPipeline: true
+				}
+			}
+		}
+		stage("Auto-increment TAG") {
+			steps {
+				script {
+                             
+                   
+                              env.CDBNO =  sh(script: 'echo ${GIT_BRANCH##*-}', returnStdout: true)
+                              env.CDBNO = env.CDBNO.replaceAll("[\\r\\n]", "")
+                              echo "${CDBNO}"             
+					sh '''
+                              Dev_CDBNO=${GIT_BRANCH##*-}
+                              echo "The Dev Tag Couch DB No is = ${GIT_BRANCH##*-} variable = ${Dev_CDBNO}" 
+					ID=$(curl -k -s -u jenkins:jenkins -X GET ${couchDB_URL}/${couch_api_svc}/${couchDB_env} | jq -r ._id)
+					REV=$(curl -k -s -u jenkins:jenkins -X GET ${couchDB_URL}/${couch_api_svc}/${couchDB_env} | jq -r ._rev)
+					TAG_Major=$(curl -k -s -u jenkins:jenkins -X GET ${couchDB_URL}/${couch_api_svc}/${couchDB_env} | jq -r .Tag_Major)
+					TAG_Minor=$(curl -k -s -u jenkins:jenkins -X GET ${couchDB_URL}/${couch_api_svc}/${couchDB_env} | jq -r .Tag_Minor)
+					current_tag="$TAG_Major.$TAG_Minor"
+					echo "current_tag: $current_tag"
+					if [[ $TAG_Minor -le "98" ]]
+					then
+						echo "incrementing Minor value."
+						TAG_Minor=$(($TAG_Minor+1))
+						TAG="$TAG_Major.$TAG_Minor"
+						echo "TAG after increment: $TAG"
+					else
+						echo "Minor tag exceeded 99. So, Incrementing Major value."
+						TAG_Major=$(($TAG_Major+1))
+						TAG_Minor="0"
+						TAG="$TAG_Major.$TAG_Minor"
+						echo "TAG after increment: $TAG"
+					fi
+					curl -k -s -u jenkins:jenkins -X PUT "${couchDB_URL}/${couch_api_svc}/${couchDB_env}" -d "{\\"_id\\":\\"$ID\\",\\"_rev\\":\\"$REV\\",\\"Tag_Major\\":\\"$TAG_Major\\",\\"Tag_Minor\\":\\"$TAG_Minor\\",\\"TAG\\":\\"$TAG\\"}"
+					'''
+					env.TAG = sh(script: 'curl -k -s -u jenkins:jenkins -X GET ${couchDB_URL}/${couch_api_svc}/${couchDB_env} | jq -r .TAG', returnStdout: true)
+					//env.TAG = "${couchDB_env}"+"-"+"${TAG}"
+                              if(env.GIT_BRANCH.contains("-Release")){
+                                 env.TAG = "${IMAGE_REL_TAG_NAME}"+"-"+"${CDBNO}"
+                              }else{
+                                 env.TAG = "${IMAGE_TAG_NAME}"+"-"+"${CDBNO}" 
+                              }
+                              
+                              
+					echo "TAG Value: ${TAG}"
+                              //echo "Release TAG: ${RELTAG}"
+				}
+			}
+		}
+		stage('Build & Push Image'){
+			steps {
+				script {
+					sh '''
+                              sudo cp devops-code/janet/corporate-website-e2e/Dockerfile app-code/Dockerfile
+                              cd app-code
+					sudo podman login -u ${QUAY_CREDS_USR} -p ${QUAY_CREDS_PSW}  quay.io
+					sudo podman build -t ${IMAGE_NAME}:${TAG} . --build-arg CONT_INST="${CONT_INST}"
+					echo "${IMAGE_NAME}:${TAG}" > sysdig_secure_images
+					sudo podman tag ${IMAGE_NAME}:${TAG} nexus.americanfirstfinance.com/aff/${IMAGE_NAME}:${TAG}
+					sudo podman login nexus.americanfirstfinance.com -u ${NEXUS_CREDS_USR} -p ${NEXUS_CREDS_PSW}
+					sudo podman push nexus.americanfirstfinance.com/aff/${IMAGE_NAME}:${TAG} --tls-verify=false && echo "Push to internal repo"
+                              echo "Tagging  for external repo push"
+					sudo podman tag nexus.americanfirstfinance.com/aff/${IMAGE_NAME}:${TAG} quay.io/americanfirstfinance/${IMAGE_NAME}:${TAG}
+					echo "Pushing Image to external Quay Registry"
+					sudo podman login -u ${QUAY_CREDS_USR} -p ${QUAY_CREDS_PSW}  quay.io
+					sudo podman push quay.io/americanfirstfinance/${IMAGE_NAME}:${TAG}
+					'''
+				}
+			}
+		}
+		stage("ACS Scanning") {
+			steps {
+                stackrox (
+                    apiToken: "${ACS_TOKEN_PSW}",
+                    caCertPEM: '',
+                    enableTLSVerification: false,
+                    failOnCriticalPluginError: true,
+                    failOnPolicyEvalFailure: false,
+                    portalAddress: 'https://central-stackrox.apps.acm.cloud.americanfirstfinance.com:443',
+                    imageNames: "quay.io/americanfirstfinance/${IMAGE_NAME}:${TAG}"
+                )
+              }
+            }
+
+		stage("Deploy to OC") {
+			steps {
+				sh'''
+				echo "TAG value: ${TAG}"
+				export "TAG=${TAG}"
+				envsubst < $WORKSPACE/devops-code/janet/corporate-website-e2e/qa/qa-deployments.yaml > $WORKSPACE/devops-code/janet/corporate-website-e2e/qa/new-qa-deployments.yaml
+				oc login --token=$OCP_TOKEN_PSW --server=https://api.qa.cloud.americanfirstfinance.com:6443 --insecure-skip-tls-verify=true
+				oc delete -f $WORKSPACE/devops-code/janet/corporate-website-e2e/qa/new-qa-deployments.yaml
+				oc apply -f $WORKSPACE/devops-code/janet/corporate-website-e2e/qa/new-qa-deployments.yaml
+				oc get all
+				oc logout --token=$OCP_TOKEN_PSW --server=https://api.qa.cloud.americanfirstfinance.com:6443 --insecure-skip-tls-verify=true
+				'''
+			}
+		}
+		stage("Get Change logs") {
+			steps {
+				script {
+					//script to get GIT_COMMIT Change logs
+					LIST = getChangeString(COMMIT_MSGS)
+					LIST.toString()
+				}
+			}
+        }
+        stage("Tag Bitbucket"){
+            steps {
+               script {
+                  withCredentials([[$class: 'UsernamePasswordMultiBinding' , credentialsId: 'ckorvi_bitbucket', passwordVariable: 'GIT_PASSWORD', usernameVariable: 'GIT_USERNAME' ]])
+                  {
+                    //if(env.GIT_BRANCH.contains("-Release")){
+                      sh '''
+                         GIT_URL_PWD=https://${GIT_USERNAME}:${GIT_PASSWORD}@bitbucket.org/americanfirstfinance/janet.git
+                         GIT_URL=https://${GIT_USERNAME}@bitbucket.org/americanfirstfinance/janet.git
+                         #git remote set-url origin https://${GIT_USERNAME}:udy4xrRyxgBHKRXaMJv8@bitbucket.org/americanfirstfinance/janet.git
+                         git remote set-url origin https://${GIT_USERNAME}:${GIT_PASSWORD}@bitbucket.org/americanfirstfinance/janet.git
+                         git config user.email "ckorvi@americanfirstfinance.com"
+                         git config user.name "ckorvi"
+                         git tag -am "Creating tag ${TAG} for release" "${TAG}"
+                         git push origin  "${TAG}"
+                      '''
+                   //}
+                 }
+               }  
+            }  
+        }
+    }
+	post {
+        always {
+			script {
+				if ("${currentBuild.currentResult}" == 'SUCCESS') {
+					slackSend (color: '#00FF00', message: "*${currentBuild.currentResult}:* Job '${env.JOB_NAME} [${env.BUILD_NUMBER}]' \n ChangeLogs: ${LIST} \n More info at: (${env.BUILD_URL})")
+                              emailext body: " QA image with tag number = ${env.RELTAG} is released",    
+					mimeType: 'text/html',
+					subject: "[Jenkins] ${jobName} Development New Release",
+					from: "${useremail}",
+					to: "${mailToRecipients}",
+					recipientProviders: [[$class: 'CulpritsRecipientProvider']]
+    
+				} else {
+					slackSend (color: '#FF0000', message: "*${currentBuild.currentResult}:* Job '${env.JOB_NAME} [${env.BUILD_NUMBER}]' \n ChangeLogs: ${LIST} \n More info at: (${env.BUILD_URL})")
+                              emailext body: "QA image with tag number = ${env.RELTAG} is Failed!!. Check the jenkins logs at <a href=\"${env.BUILD_URL}ConsoleLogs\">Console Logs</a><br>",    
+					mimeType: 'text/html',
+					subject: "[Jenkins] ${jobName} Development New Release",
+					from: "${useremail}",
+					to: "${mailToRecipients}",
+					recipientProviders: [[$class: 'CulpritsRecipientProvider']]
+   
+                              
+				}
+			}
+        }
+    }
+}
+
+@NonCPS
+def getChangeString(COMMIT_MSGS) {
+ 	MAX_MSG_LEN = 100
+ 	def changeString = ""
+ 	echo "Gathering SCM changes"
+ 	def changeLogSets = currentBuild.changeSets
+ 	for (int i = 0; i < changeLogSets.size(); i++) {
+ 		def entries = changeLogSets[i].items
+ 		for (int j = 0; j < entries.length; j++) {
+ 			def entry = entries[j]
+			//echo "Commit by ${entry.author} at ${new Date(entry.timestamp)}: ${entry.msg}; \n"
+			COMMIT_MSGS += "Commit by ${entry.author} at ${new Date(entry.timestamp)}: ${entry.msg}; \n"
+			//echo "COMMIT_MSGS: ${COMMIT_MSGS}"
+		}
+ 	}
+ 	if (!changeString) {
+ 		changeString = " - No new changes"
+ 	}
+ 	//return [changeString,COMMIT_MSGS];
+	return [COMMIT_MSGS];
+}

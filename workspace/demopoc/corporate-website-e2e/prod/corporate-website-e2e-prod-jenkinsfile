@@ -1,0 +1,618 @@
+def COMMIT_MSGS = ''
+def LIST = ''
+def CONT_INST = ''
+def jobName = currentBuild.fullDisplayName
+def mailToRecipients = 'ckorvi@americanfirstfinance.com'
+def useremail='no-replyBuildRequest@americanfirstfinance.com'
+def jenkins_approvers = "ckorvi"
+pipeline {
+    agent any
+    environment {
+		GIT_BRANCH    		   			  = 'main'
+            GIT_TAG                       =  "${BITBUCKET_TAG}"
+            APPROVERS                     = "${APPROVERS_DETAILS}" 
+            NOTIFIERS                     = "${EMAIL_NOTIFIERS}"
+            JIRA_ID                       = "${JIRA_ID}"
+            APP_NAME                      = 'corporate-website e2e (Janet)'
+            ENV                           = 'Production' 
+            ROLLBACK                      = "${IS_ROLLBACK}"
+            TRELLOPRIORITY                = "${TRELLO_PRIORITY}"
+            TRELLO_IMPACT_AREA            = "${TRELLO_AREA_OF_IMPACT}"
+            TRELLORISK                    = "${TRELLO_RISK}"
+            TRELLO_RESOURCES              = "${TRELLO_TECHNICAL_RESOURCES}"
+            TRELLO_MDCMS                  = "${MDCMS}"
+            TRELLO_STEPS                  = "${TRELLO_IMPLEMENTATION_STEPS}"
+            TRELLO_IMPLEMENTERS           = "${TRELLO_IMPLEMENTERS}"
+            TRELLO_CRIDS                  = "${MORPHEUS_CRIDS}"
+            TRELLO_BACKOUT                = "${TRELLO_BACKOUT_PLAN}"
+            TRELLO_EXPECTED_RES           = "{TRELLO_EXPECTED_RESULTS}"
+            SHUT_WEBSERVER                = "${SHUTDOWN_WEBSERVER}"
+            SCH_REQ                       = "${SCHEDULING_REQUIRED}"
+            SCHEDULE_TIME                 = "${SCHEDULE}"
+		BITBUCKET_CREDS               = 'svc_jenkinsaff'
+		GIT_REPO_URL_APP			= 'https://bitbucket.org/americanfirstfinance/janet.git'
+            GIT_REPO_URL_DEVOPS           = 'https://bitbucket.org/americanfirstfinance/devopscode.git'
+            WORKSPACE			      = pwd()
+		PRD_OCP_TOKEN			= credentials('prd-svc-jenkins-janet')
+		DR_OCP_TOKEN			= credentials('dr-svc-jenkins-janet')
+            ACS_TOKEN                     = credentials('svc-acs-token')
+		NEXUS_CREDS				= credentials('nexus')
+		QUAY_CREDS				= credentials('kwiksign-roboaccount')
+		IMAGE_NAME				= 'janet'
+            IMAGE_TAG_NAME                = 'prod-corporate-website-e2e-Release'  
+		couchDB_URL				= 'https://cidb.americanfirstfinance.com'
+		couch_api_svc			= 'janet'
+		couchDB_env				= 'release'
+            APP_PROJECT                   = 'janet'
+            APP_FOLDER                    = 'corporate-website-e2e'
+            APP_ENV                       = 'prod'
+	}
+	options {
+		
+		skipDefaultCheckout()
+		disableConcurrentBuilds()
+	}
+    stages {
+        stage("Build Parameters") {
+			steps {
+			     println "BRANCH NAME = ${env.GIT_BRANCH}"
+                       println "GIT TAG VALUE = ${env.GIT_TAG}"
+                       println "APPLICATION  = ${env.APP_NAME}"
+                       println "APPROVERS  = ${env.APPROVERS}"
+                       println "NOTIFIERSs  = ${env.NOTIFIERS}"
+                       println "JIRA ID  = ${env.JIRA_ID}"
+                       println "ENVIRONMENT  = ${env.ENV}"
+                       println "ROLLBACK REQUESTED  = ${env.ROLLBACK}"
+                       println "TRELLO PRIORITY   = ${env.TRELLOPRIORITY}"
+                       println "TRELLO AREA OF IMPACT   = ${env.TRELLO_IMPACT_AREA}"
+                       println "TRELLO RISKS   = ${env.TRELLORISK}" 
+                       println "TRELLO RESOURCES   = ${env.TRELLO_RESOURCES}"
+                       println "TRELLO MDCMS   = ${env.TRELLO_MDCMS}"
+                       println "TRELLO IMPLEMENTATION STEPS   = ${env.TRELLO_STEPS}"
+                       println "TRELLO IMPLEMENTERS   = ${env.TRELLO_IMPLEMENTERS}"
+                       println "TRELLO BACKOUT PLAN   = ${env.TRELLO_BACKOUT}"
+                       println "TRELLO EXPECTED RESULTS   = ${env.TRELLO_EXPECTED_RES}" 
+                       println "NEED TO SHITDOWN WEBSERVER?   = ${env.SHUT_WEBSERVER}"
+                       println "SCHEDULING REQUESTED   = ${env.SCH_REQ}"
+                       println "SCHEDULED_TIME   = ${env.SCHEDULE_TIME}"
+                       script{
+                          String notifiers_list = "${env.NOTFIERS}"
+                          notifiers_list.replaceAll(",", ";")
+                          String approvers_list = "${env.APPROVERS}"
+                          
+                          mailToRecipients  = notifiers_list
+                       }
+
+                   }
+		}
+             
+            stage('Notify') {
+    		   steps{
+	    		script{
+					def userAborted = false
+                              def emailbodyText = ""
+                              if("${env.IS_ROLLBACK}" == "true")
+                              {
+					 emailbodyText = "Rollback."
+                              }else{
+                               emailbodyText = "Production Deployment."
+                              }
+                              // emailext body: '''
+					//       "You are requested to approve ${emailbodyText}" Please go to console output of <a href="${BUILD_URL}input">click to approve</a> input to approve or Reject.<br>
+					//   ''',
+                                 emailext body: '''
+					       "A jenkins job "${jobName}" is triggered for "${APP_NAME}" :: "${ENV}". <br>
+					   ''',       
+					mimeType: 'text/html',
+					//subject: "[Jenkins] ${jobName} Build Approval Request",
+                              subject: "[Jenkins] ${jobName} is triggered",
+					from: "${useremail}",
+					to: "${mailToRecipients}",
+					recipientProviders: [[$class: 'CulpritsRecipientProvider']]
+                              /*
+					try { 
+		        	            userInput = input submitter: approvers_list, message: 'Do you approve?'
+	      	            } catch (org.jenkinsci.plugins.workflow.steps.FlowInterruptedException e) {
+	        		           cause = e.causes.get(0)
+	         		           echo "Aborted by " + cause.getUser().toString()
+					     userAborted = true
+		    		          
+	       			}
+				      if (userAborted) {
+					     currentBuild.result = 'ABORTED'
+				      } else {
+	       	                 echo "Approved by user"
+                              }
+                              */
+                          }
+                    }
+            }
+            stage ("Build Schedule") {
+              steps{
+			script {
+           			def schedule_required = "${env.SCH_NEEDED}"
+           			def sch = "${env.BUILD_SCHEDULE}"
+            		
+            
+            		def CurrDateTime = new Date()
+            		String currentTime = CurrDateTime.format("HH:mm:ss" )
+            		echo "currentTime ->" + currentTime
+           
+            		
+            		if (schedule_required == "true"){
+               			elapsedTime= getBuildElapsedTime(sch)
+               			echo "Hold  Build util elapsed time completes"
+                              echo "Elapsed Time =" + elapsedTime
+               			
+               			sleep(elapsedTime)
+            		}
+            		else{
+               			echo "No hold for scheduling is required."
+           			}
+                   }
+              }
+            }
+            stage("JIRA UPDATE")
+            {
+            steps{
+               script {
+                     slackSend (color: '#FFFF00', message: "STARTED: Job: '${env.JOB_NAME} [${env.BUILD_NUMBER}]', (${env.BUILD_URL} \n APP: ${env.APP_NAME} \n BRANCH: ${env.GIT_BRANCH} \n ENV: ${env.ENV} \n NOTIFIERS: ${env.NOTIFIERS} \n APPROVERS: ${env.APPROVERS}  GIT TAG = ${env.GIT_TAG} \n  TRELLO PRIORITY  = ${env.TRELLOPRIORITY} \n TRELLO AREA OF IMPACT  = ${env.TRELLO_IMPACT_AREA} \n  TRELLO RISK  = ${env.TRELLORISK} \n TRELLO TECHNICAL RESOURCES  = ${env.TRELLO_RESOURCES} \n TRELLO MDCMS  = ${env.TRELLO_MDCMS} \n TRELLO IMPLEMENTATION STEPS  = ${env.TRELLO_STEPS} \n TRELLO IMPLEMENTERS  = ${env.TRELLO_IMPLEMENTERS} \n TRELLO MORPHEUS CRIDS  = ${env.TRELLO_CRIDS} \n TRELLO BACKOUT PLAN  = ${env.TRELLO_BACKOUT} \n TRELLO EXPECTED RESULTS  = ${env.TRELLO_EXPECTED_RES} \n TRELLO NEED TO SHUT WEBSERVER?  = ${env.SHUT_WEBSERVER} \n IS SCHEDULING REQUIRED?  = ${env.SCH_REQ} \n SCHEDULE TIME SET  = ${env.SCHEDULE_TIME} \n ROLLBACK REQUESTED = ${env.ROLLBACK})")
+				
+                     withEnv(['JIRA_SITE=JIRA']) {
+                       def comment = [ body: "Janet corporate-website Production Build Started. '\n'  APPLICATION = ${env.APP_NAME} '\n' ENVIRONMENT = ${env.ENV} '\n' BRANCH = ${env.GIT_BRANCH} '\n' NOTIFIER EMAILS =  ${env.NOTIFIERS} '\n' APPROVERS = ${env.APPROVERS} '\n' GIT TAG = ${env.GIT_TAG} '\n' TRELLO PRIORITY  = ${env.TRELLOPRIORITY} '\n' TRELLO AREA OF IMPACT  = ${env.TRELLO_IMPACT_AREA} '\n'  TRELLO RISK  = ${env.TRELLORISK} '\n' TRELLO TECHNICAL RESOURCES  = ${env.TRELLO_RESOURCES} '\n' TRELLO MDCMS  = ${env.TRELLO_MDCMS} '\n' TRELLO IMPLEMENTATION STEPS  = ${env.TRELLO_STEPS} '\n' TRELLO IMPLEMENTERS  = ${env.TRELLO_IMPLEMENTERS} '\n' TRELLO MORPHEUS CRIDS  = ${env.TRELLO_CRIDS} '\n' TRELLO BACKOUT PLAN  = ${env.TRELLO_BACKOUT} '\n' TRELLO EXPECTED RESULTS  = ${env.TRELLO_EXPECTED_RES} '\n' TRELLO NEED TO SHUT WEBSERVER?  = ${env.SHUT_WEBSERVER} '\n' IS SCHEDULING REQUIRED?  = ${env.SCH_REQ} '\n' SCHEDULE TIME SET  = ${env.SCHEDULE_TIME} '\n' ROLLBACK REQUESTED = ${env.ROLLBACK}" ]
+                       def jiraid = "${env.JIRA_ID}"
+                       
+                       jiraAddComment idOrKey: jiraid , input: comment
+                    }
+               }
+            }
+          } 
+          	
+            stage("Cleanup Workspace ") {
+			steps {
+			  
+				cleanWs()
+				//clean up tmp directory
+				dir("${env.WORKSPACE}@tmp") {
+					deleteDir()
+				}
+				// clean up script directory
+				dir("${env.WORKSPACE}@script") {
+					deleteDir()
+				}
+				dir("${env.WORKSPACE}@script@tmp") {
+					deleteDir()
+				}
+				step([$class: 'WsCleanup'])
+			}
+		}
+            
+            stage("Checkout the source code") {
+			steps {
+			  dir ('app-code'){
+                         checkout([$class: 'GitSCM', 
+                                        branches: [[name: "refs/tags/${env.GIT_TAG}"]], 
+                                        doGenerateSubmoduleConfigurations: false, 
+                                        extensions: [[$class: 'SubmoduleOption', disableSubmodules: false, parentCredentials: false, recursiveSubmodules: false, reference: '', trackingSubmodules: false]], 
+                                        submoduleCfg: [], 
+                                        userRemoteConfigs: [[credentialsId: "${env.BITBUCKET_CREDS}", url: "${env.GIT_REPO_URL_APP}"]]
+                                     ])
+                 }
+
+                 dir ('devops-code'){
+                                 checkout([$class: 'GitSCM',
+                                        branches: [[name: "refs/remotes/origin/master"]], 
+                                        doGenerateSubmoduleConfigurations: false, 
+                                        extensions: [[$class: 'SubmoduleOption', disableSubmodules: false, parentCredentials: false, recursiveSubmodules: false, reference: '', trackingSubmodules: false]], 
+                                        submoduleCfg: [], 
+                                        userRemoteConfigs: [[credentialsId: "${env.BITBUCKET_CREDS}", url: "${env.GIT_REPO_URL_DEVOPS}"]]
+                                     ])
+                                
+                       }  
+        	}
+        }
+       
+
+		 stage("Read map parameters from JSON") {
+			 steps {
+			      script {
+
+           				   def props = readJSON file: './devops-code/${APP_PROJECT}/${APP_FOLDER}/dockerProps.json'
+						  //  def key = "${env.INSTANCE}"
+                                       def key = 'corporate-website-prod'
+						   //println("Docker Variable ->  " + key)
+						   //println("Docker Variable ->  " + props[key])
+						    env.CONT_INST = props[key]
+                        }
+	         	    }
+												}
+
+
+
+        /*stage('Sonarqube') {
+           environment {
+                scannerHome = tool name: 'SonarQubeScanner' , type: 'hudson.plugins.sonar.SonarRunnerInstallation'
+           }
+           steps {
+              withSonarQubeEnv('sonarqube') {
+                sh "${scannerHome}/bin/sonar-scanner -Dsonar.branch.name=$GIT_TAG"
+			  }
+           }
+		}
+		stage('Quality gate') {
+			steps {
+				timeout(time: 1, unit: 'HOURS') { // Just in case something goes wrong, pipeline will be killed after a timeout
+					waitForQualityGate abortPipeline: true
+				}
+			}
+		}*/
+		stage("Auto-increment TAG") {
+			steps {
+				script {
+                             
+                   
+                              env.CDBNO =  sh(script: 'echo ${GIT_TAG##*-}', returnStdout: true)
+                              env.CDBNO = env.CDBNO.replaceAll("[\\r\\n]", "")
+                              echo "${CDBNO}"             
+					sh '''
+                              
+                              Dev_CDBNO=${GIT_TAG##*-}
+                              echo "The Dev Tag Couch DB No is = ${GIT_TAG##*-} variable = ${Dev_CDBNO}" 
+					ID=$(curl -k -s -u jenkins:jenkins -X GET ${couchDB_URL}/${couch_api_svc}/${couchDB_env} | jq -r ._id)
+					REV=$(curl -k -s -u jenkins:jenkins -X GET ${couchDB_URL}/${couch_api_svc}/${couchDB_env} | jq -r ._rev)
+					TAG_Major=$(curl -k -s -u jenkins:jenkins -X GET ${couchDB_URL}/${couch_api_svc}/${couchDB_env} | jq -r .Tag_Major)
+					TAG_Minor=$(curl -k -s -u jenkins:jenkins -X GET ${couchDB_URL}/${couch_api_svc}/${couchDB_env} | jq -r .Tag_Minor)
+					current_tag="$TAG_Major.$TAG_Minor"
+					echo "current_tag: $current_tag"
+					if [[ $TAG_Minor -le "98" ]]
+					then
+						echo "incrementing Minor value."
+						TAG_Minor=$(($TAG_Minor+1))
+						TAG="$TAG_Major.$TAG_Minor"
+						echo "TAG after increment: $TAG"
+					else
+						echo "Minor tag exceeded 99. So, Incrementing Major value."
+						TAG_Major=$(($TAG_Major+1))
+						TAG_Minor="0"
+						TAG="$TAG_Major.$TAG_Minor"
+						echo "TAG after increment: $TAG"
+					fi
+					curl -k -s -u jenkins:jenkins -X PUT "${couchDB_URL}/${couch_api_svc}/${couchDB_env}" -d "{\\"_id\\":\\"$ID\\",\\"_rev\\":\\"$REV\\",\\"Tag_Major\\":\\"$TAG_Major\\",\\"Tag_Minor\\":\\"$TAG_Minor\\",\\"TAG\\":\\"$TAG\\"}"
+                             
+					'''
+					env.TAG = sh(script: 'curl -k -s -u jenkins:jenkins -X GET ${couchDB_URL}/${couch_api_svc}/${couchDB_env} | jq -r .TAG', returnStdout: true)
+					//env.TAG = "${couchDB_env}"+"-"+"${TAG}"
+                              env.TAG = "${IMAGE_TAG_NAME}"+"-"+"${CDBNO}"
+                              env.RELTAG = "janet"+"-"+"${IMAGE_TAG_NAME}"+"-"+"qaverified"+"-"+"${CDBNO}"
+					echo "TAG Value: ${TAG}"
+                              echo "Release TAG: ${RELTAG}"
+				}
+			}
+		}
+		stage('Build & Push Image'){
+			steps {
+				script {
+					sh '''
+                              sudo cp devops-code/${APP_PROJECT}/${APP_FOLDER}/Dockerfile app-code/Dockerfile
+                              cd devops-code
+					sudo podman login -u ${QUAY_CREDS_USR} -p ${QUAY_CREDS_PSW}  quay.io
+                              sudo podman build -f $WORKSPACE/website-Dockerfile -t ${IMAGE_NAME}:${TAG}  --build-arg CONT_INST="${CONT_INST}"
+                              sudo podman run -d --name bamboojanetimage ${IMAGE_NAME}:${TAG}
+                              sudo podman cp bamboojanetimage:/appdir/ .
+                              sudo chown -R jenkins:bamboo $WORKSPACE
+                              sudo chmod -R 774 .
+                              sudo podman rm bamboojanetimage
+                              sudo podman rmi -f ${IMAGE_NAME}:${TAG}
+                              echo "Tagging  for external repo push"
+					sudo podman tag nexus.americanfirstfinance.com/aff/${IMAGE_NAME}:${TAG} quay.io/americanfirstfinance/${IMAGE_NAME}:${TAG}
+					echo "Pushing Image to external Quay Registry"
+					sudo podman login -u ${QUAY_CREDS_USR} -p ${QUAY_CREDS_PSW}  quay.io
+					sudo podman push quay.io/americanfirstfinance/${IMAGE_NAME}:${TAG}
+					'''
+				}
+			}
+		}
+            stage("ACS Scanning") {
+			steps {
+                stackrox (
+                    apiToken: "${ACS_TOKEN_PSW}",
+                    caCertPEM: '',
+                    enableTLSVerification: false,
+                    failOnCriticalPluginError: true,
+                    failOnPolicyEvalFailure: false,
+                    portalAddress: 'https://central-stackrox.apps.acm.cloud.americanfirstfinance.com:443',
+                    imageNames: "quay.io/americanfirstfinance/${IMAGE_NAME}:${TAG}"
+                )
+              }
+            }
+        stage("Website-2.0 Deployment"){
+			parallel {
+				stage('Deployment on pln-prd1corp1') {
+					steps {
+						slackSend (color: '#FFFF00', message: "pln-prd1corp1 deployment is STARTED: Job: '${env.JOB_NAME} [${env.BUILD_NUMBER}]', (${env.BUILD_URL})")
+						script {
+							echo "deploying on pln-prd1corp1"
+							sh '''
+							sudo su bamboo <<EOSCRIPT1
+							ssh pln-prd1corp1.aff.local "sudo rm -rf /opt/www/website/*" &&
+						echo "remote website dir cleaned successfully"
+						EOSCRIPT1
+						'''
+						sh '''
+                                    
+						sudo su bamboo <<EOF
+						whoami
+						cd app-code
+						rsync --rsync-path="sudo rsync" -icrvhz --chmod=D2775,F664 --exclude 'node_modules' --exclude '.env' --exclude 'Jenkinsfile' --exclude '.gitattributes' --exclude '.gitignore' --exclude '.git' --exclude 'Dockerfile' --exclude 'Jenkinsfile-dev' --exclude 'Jenkinsfile-qa' --exclude 'Jenkinsfile-test' $WORKSPACE/app-code/appdir/dist/apps/corporate-website/ bamboo@pln-prd1corp1.aff.local:/opt/www/website &&
+						rsync --rsync-path="sudo rsync" -icrvhz --chmod=D2775,F664 --exclude 'node_modules' --exclude '.env' --exclude 'Jenkinsfile' --exclude '.gitattributes' --exclude '.gitignore' --exclude '.git' --exclude 'Dockerfile' --exclude 'Jenkinsfile-dev' --exclude 'Jenkinsfile-qa' --exclude 'Jenkinsfile-test' $WORKSPACE/app-code/appdir/dist/corporate-website/ bamboo@pln-prd1corp1.aff.local:/opt/www/website &&
+						ssh pln-prd1corp1.aff.local "sudo chown -R pm2:pm2 /opt/www/website && sudo systemctl restart pm2" &&
+						echo "deployment successful"
+						exit
+						EOF
+						'''
+						ENV = "pln-prd1corp1"
+						}
+					}
+					post {
+						always {
+							script {
+								if ("${ENV}" == 'pln-prd1corp1') {
+									slackSend (color: '#00FF00', message: "*${ENV} deployment is ${currentBuild.currentResult}:* Job '${env.JOB_NAME} [${env.BUILD_NUMBER}]' \n ChangeLogs: ${LIST} \n More info at: (${env.BUILD_URL})")
+								} else {
+									slackSend (color: '#FF0000', message: "*${ENV} deployment is ${currentBuild.currentResult}:* Job '${env.JOB_NAME} [${env.BUILD_NUMBER}]' \n ChangeLogs: ${LIST} \n More info at: (${env.BUILD_URL})")
+								}
+							}
+						}
+					}
+				}
+				stage('Deployment on pln-prd1corp2') {
+					steps {
+						slackSend (color: '#FFFF00', message: "pln-prd1corp2 deployment is STARTED: Job: '${env.JOB_NAME} [${env.BUILD_NUMBER}]', (${env.BUILD_URL})")
+						script {
+							echo "deploying on pln-prd1corp2"
+							sh '''
+							sudo su bamboo <<EOSCRIPT1
+							ssh pln-prd1corp2.aff.local "sudo rm -rf /opt/www/website/*" &&
+						echo "remote website dir cleaned successfully"
+						EOSCRIPT1
+						'''
+						sh '''
+						sudo su bamboo <<EOF
+						whoami
+                                    cd app-code
+						pwd
+						rsync --rsync-path="sudo rsync" -icrvhz --chmod=D2775,F664 --exclude 'node_modules' --exclude '.env' --exclude 'Jenkinsfile' --exclude '.gitattributes' --exclude '.gitignore' --exclude '.git' --exclude 'Dockerfile' --exclude 'Jenkinsfile-dev' --exclude 'Jenkinsfile-qa' --exclude 'Jenkinsfile-test' $WORKSPACE/app-code/appdir/dist/apps/corporate-website/ bamboo@pln-prd1corp2.aff.local:/opt/www/website &&
+						rsync --rsync-path="sudo rsync" -icrvhz --chmod=D2775,F664 --exclude 'node_modules' --exclude '.env' --exclude 'Jenkinsfile' --exclude '.gitattributes' --exclude '.gitignore' --exclude '.git' --exclude 'Dockerfile' --exclude 'Jenkinsfile-dev' --exclude 'Jenkinsfile-qa' --exclude 'Jenkinsfile-test' $WORKSPACE/app-code/appdir/dist/corporate-website/ bamboo@pln-prd1corp2.aff.local:/opt/www/website &&
+						ssh pln-prd1corp2.aff.local "sudo chown -R pm2:pm2 /opt/www/website && sudo systemctl restart pm2" &&
+						echo "deployment successful"
+						exit
+						EOF
+						'''
+						ENV = "pln-prd1corp2"
+						}
+					}
+					post {
+						always {
+							script {
+								if ("${ENV}" == 'pln-prd1corp2') {
+									slackSend (color: '#00FF00', message: "*${ENV} deployment is ${currentBuild.currentResult}:* Job '${env.JOB_NAME} [${env.BUILD_NUMBER}]' \n ChangeLogs: ${LIST} \n More info at: (${env.BUILD_URL})")
+								} else {
+									slackSend (color: '#FF0000', message: "*${ENV} deployment is ${currentBuild.currentResult}:* Job '${env.JOB_NAME} [${env.BUILD_NUMBER}]' \n ChangeLogs: ${LIST} \n More info at: (${env.BUILD_URL})")
+								}
+							}
+						}
+					}
+				}
+				stage('Deploy to atl-prd1corp1') {
+					steps {
+						slackSend (color: '#FFFF00', message: "atl-prd1corp1 deployment is STARTED: Job: '${env.JOB_NAME} [${env.BUILD_NUMBER}]', (${env.BUILD_URL})")
+						script {
+							echo "deploying on atl-prd1corp1"
+							sh '''
+							sudo su bamboo <<EOSCRIPT1
+							ssh atl-prd1corp1.aff.local "sudo rm -rf /opt/www/website/*" &&
+						echo "remote website dir cleaned successfully"
+						EOSCRIPT1
+						'''
+						sh '''
+						sudo su bamboo <<EOF
+						whoami
+                                    cd app-code
+						pwd
+						rsync --rsync-path="sudo rsync" -icrvhz --chmod=D2775,F664 --exclude 'node_modules' --exclude '.env' --exclude 'Jenkinsfile' --exclude '.gitattributes' --exclude '.gitignore' --exclude '.git' --exclude 'Dockerfile' --exclude 'Jenkinsfile-dev' --exclude 'Jenkinsfile-qa' --exclude 'Jenkinsfile-test' $WORKSPACE/app-code/appdir/dist/apps/corporate-website/ bamboo@atl-prd1corp1.aff.local:/opt/www/website &&
+						rsync --rsync-path="sudo rsync" -icrvhz --chmod=D2775,F664 --exclude 'node_modules' --exclude '.env' --exclude 'Jenkinsfile' --exclude '.gitattributes' --exclude '.gitignore' --exclude '.git' --exclude 'Dockerfile' --exclude 'Jenkinsfile-dev' --exclude 'Jenkinsfile-qa' --exclude 'Jenkinsfile-test' $WORKSPACE/app-code/appdir/dist/corporate-website/ bamboo@atl-prd1corp1.aff.local:/opt/www/website &&
+						ssh atl-prd1corp1.aff.local "sudo chown -R pm2:pm2 /opt/www/website && sudo systemctl restart pm2" &&
+						echo "deployment successful"
+						exit
+						EOF
+							'''
+							ENV = "atl-prd1corp1"
+							}
+					}
+					post {
+						always {
+							script {
+								if ("${ENV}" == 'atl-prd1corp1') {
+									slackSend (color: '#00FF00', message: "*${ENV} Deployment is:${currentBuild.currentResult}:* Job '${env.JOB_NAME} [${env.BUILD_NUMBER}]' \n ChangeLogs: ${LIST} \n More info at: (${env.BUILD_URL})")
+								} else {
+									slackSend (color: '#FF0000', message: "*${ENV} Deployment is:${currentBuild.currentResult}:* Job '${env.JOB_NAME} [${env.BUILD_NUMBER}]' \n ChangeLogs: ${LIST} \n More info at: (${env.BUILD_URL})")
+								}
+							}
+						}
+					}
+				}
+				stage('Deploy to atl-prd1corp2') {
+					steps {
+						slackSend (color: '#FFFF00', message: "atl-prd1corp2 deployment is STARTED: Job: '${env.JOB_NAME} [${env.BUILD_NUMBER}]', (${env.BUILD_URL})")
+						script {
+							echo "deploying on atl-prd1corp2"
+							sh '''
+							sudo su bamboo <<EOSCRIPT1
+							ssh atl-prd1corp2.aff.local "sudo rm -rf /opt/www/website/*" &&
+						echo "remote website dir cleaned successfully"
+						EOSCRIPT1
+						'''
+						sh '''
+						sudo su bamboo <<EOF
+						whoami
+                                    cd app-code
+						pwd
+						rsync --rsync-path="sudo rsync" -icrvhz --chmod=D2775,F664 --exclude 'node_modules' --exclude '.env' --exclude 'Jenkinsfile' --exclude '.gitattributes' --exclude '.gitignore' --exclude '.git' --exclude 'Dockerfile' --exclude 'Jenkinsfile-dev' --exclude 'Jenkinsfile-qa' --exclude 'Jenkinsfile-test' $WORKSPACE/app-code/appdir/dist/apps/corporate-website/ bamboo@atl-prd1corp2.aff.local:/opt/www/website &&
+						rsync --rsync-path="sudo rsync" -icrvhz --chmod=D2775,F664 --exclude 'node_modules' --exclude '.env' --exclude 'Jenkinsfile' --exclude '.gitattributes' --exclude '.gitignore' --exclude '.git' --exclude 'Dockerfile' --exclude 'Jenkinsfile-dev' --exclude 'Jenkinsfile-qa' --exclude 'Jenkinsfile-test' $WORKSPACE/app-code/appdir/dist/corporate-website/ bamboo@atl-prd1corp2.aff.local:/opt/www/website &&
+						ssh atl-prd1corp2.aff.local "sudo chown -R pm2:pm2 /opt/www/website && sudo systemctl restart pm2" &&
+						echo "deployment successful"
+						exit
+						EOF
+							'''
+							ENV = "atl-prd1corp2"
+							}
+					}
+					post {
+						always {
+							script {
+								if ("${ENV}" == 'atl-prd1corp2') {
+									slackSend (color: '#00FF00', message: "*${ENV} Deployment is:${currentBuild.currentResult}:* Job '${env.JOB_NAME} [${env.BUILD_NUMBER}]' \n ChangeLogs: ${LIST} \n More info at: (${env.BUILD_URL})")
+								} else {
+									slackSend (color: '#FF0000', message: "*${ENV} Deployment is:${currentBuild.currentResult}:* Job '${env.JOB_NAME} [${env.BUILD_NUMBER}]' \n ChangeLogs: ${LIST} \n More info at: (${env.BUILD_URL})")
+								}
+							}
+						}
+					}
+				}
+			}
+		}
+		stage("Get Change logs") {
+			steps {
+				script {
+                            
+					//script to get GIT_COMMIT Change logs
+					LIST = getChangeString(COMMIT_MSGS)
+					LIST.toString()
+                             
+
+				}
+			}
+        }
+        stage("Tag Bitbucket"){
+            steps {
+               script {
+                  withCredentials([[$class: 'UsernamePasswordMultiBinding' , credentialsId: 'ckorvi_bitbucket', passwordVariable: 'GIT_PASSWORD', usernameVariable: 'GIT_USERNAME' ]])
+                  {
+                    //if(env.GIT_TAG.contains("-Release")){
+                      sh '''
+                        cd app-code
+                         GIT_URL_PWD=https://${GIT_USERNAME}:${GIT_PASSWORD}@bitbucket.org/americanfirstfinance/janet.git
+                         GIT_URL=https://${GIT_USERNAME}@bitbucket.org/americanfirstfinance/janet.git
+                         #git remote set-url origin https://${GIT_USERNAME}:udy4xrRyxgBHKRXaMJv8@bitbucket.org/americanfirstfinance/janet.git
+                         git remote set-url origin https://${GIT_USERNAME}:${GIT_PASSWORD}@bitbucket.org/americanfirstfinance/janet.git
+                         git config user.email "ckorvi@americanfirstfinance.com"
+                         git config user.name "ckorvi"
+                         git tag -am "Creating tag ${RELTAG} for release" "${RELTAG}"
+                         git push origin  "${RELTAG}"
+                      
+                      '''
+                  // }
+                 }
+               }  
+            }  
+        }
+    }
+	post {
+        always {
+			script {
+				if ("${currentBuild.currentResult}" == 'SUCCESS') {
+					slackSend (color: '#00FF00', message: "*${currentBuild.currentResult}:* Job '${env.JOB_NAME} [${env.BUILD_NUMBER}]' \n ChangeLogs: ${LIST} \n More info at: (${env.BUILD_URL})")
+                              def emailbodyTextPost = ""
+                              if("${env.IS_ROLLBACK}" == "true")
+                              {
+                                emailbodyTextPost = "Rolledback to"
+                              }else{
+                                emailbodyTextPost = "Deployed to Prod"
+                                
+                              }
+                              emailext body: "${emailbodyTextPost} tag = ${env.RELTAG} successfully.",    
+					mimeType: 'text/html',
+					subject: "[Jenkins] ${jobName} Development New Release",
+					from: "${useremail}",
+					to: "${mailToRecipients}",
+					recipientProviders: [[$class: 'CulpritsRecipientProvider']]
+
+                               withEnv(['JIRA_SITE=JIRA']) {
+                                  def comment = [ body: "Janet - corporate-website Production Build Completed successfully!!." ]
+                                  def jiraid = "${env.JIRA_ID}"
+                       
+                                  jiraAddComment idOrKey: jiraid , input: comment
+                              }
+
+    
+				} else {
+					slackSend (color: '#FF0000', message: "*${currentBuild.currentResult}:* Job '${env.JOB_NAME} [${env.BUILD_NUMBER}]' \n ChangeLogs: ${LIST} \n More info at: (${env.BUILD_URL})")
+                              def emailbodyTextPost = ""
+                               if("${env.IS_ROLLBACK}" == "true")
+                              {
+ 
+                                emailbodyTextPost = "Prod Rollback Deployment"
+                             }else{
+                                emailbodyTextPost = "Prod Deployement"
+                              }
+                              emailext body: "${emailbodyTextPost } with tag number = ${env.RELTAG} is Failed!!. Check the jenkins logs at <a href=\"${env.BUILD_URL}ConsoleLogs\">Console Logs</a><br>",    
+					mimeType: 'text/html',
+					subject: "[Jenkins] ${jobName} Development New Release",
+					from: "${useremail}",
+					to: "${mailToRecipients}",
+					recipientProviders: [[$class: 'CulpritsRecipientProvider']]
+
+                              withEnv(['JIRA_SITE=JIRA']) {
+                                  def comment = [ body: "Janet - corporate-website Production Build Failed!!." ]
+                                  def jiraid = "${env.JIRA_ID}"
+                       
+                                  jiraAddComment idOrKey: jiraid , input: comment
+                              }
+
+   
+                              
+				}
+			}
+        }
+    }
+}
+
+@NonCPS
+def getChangeString(COMMIT_MSGS) {
+ 	MAX_MSG_LEN = 100
+ 	def changeString = ""
+ 	echo "Gathering SCM changes"
+ 	def changeLogSets = currentBuild.changeSets
+ 	for (int i = 0; i < changeLogSets.size(); i++) {
+ 		def entries = changeLogSets[i].items
+ 		for (int j = 0; j < entries.length; j++) {
+ 			def entry = entries[j]
+			//echo "Commit by ${entry.author} at ${new Date(entry.timestamp)}: ${entry.msg}; \n"
+			COMMIT_MSGS += "Commit by ${entry.author} at ${new Date(entry.timestamp)}: ${entry.msg}; \n"
+			//echo "COMMIT_MSGS: ${COMMIT_MSGS}"
+		}
+ 	}
+ 	if (!changeString) {
+ 		changeString = " - No new changes"
+ 	}
+ 	//return [changeString,COMMIT_MSGS];
+	return [COMMIT_MSGS];
+}
+
+
+// Format Schedule Date and Time
+def getBuildElapsedTime() {          
+        def sch = SCHEDULE
+       
+        command1 = "date -d " + "'" + sch + "'" + " +%s"
+        println ("command : -> " + command1 )
+        $schDate = sh(script: command1, returnStdout:true).trim()
+        return $schDate  
+}
+
+// Format Current Date and Time
+def getCurrTime() {  
+   command2 = "date" + " +%s"
+   $currDate = sh(script: command2, returnStdout:true).trim()
+   return $currDate
+}

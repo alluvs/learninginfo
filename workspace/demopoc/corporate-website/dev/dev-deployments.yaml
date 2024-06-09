@@ -1,0 +1,73 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+    name: janet-ui
+    namespace: janet
+spec:
+    selector:
+        matchLabels:
+            app: janet-ui
+    replicas: 1
+    template:
+        metadata:
+            labels:
+                app: janet-ui
+        spec:
+            containers:
+                - name: janet-ui
+                  image: quay.io/americanfirstfinance/janet:${TAG}
+                 # args: ['qa']
+                  imagePullPolicy: Always
+                  ports:
+                      - containerPort: 80
+            imagePullSecrets:
+                - name: janet-secret
+---
+apiVersion: v1
+kind: Service
+metadata:
+    annotations:
+        service.alpha.openshift.io/serving-cert-secret-name: janet-ui-secret
+    name: janet-ui
+    namespace: janet
+spec:
+    selector:
+        app: janet-ui
+    ports:
+        - protocol: TCP
+          port: 80
+          targetPort: 80
+---
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+    name: janet-ui
+    namespace: janet
+spec:
+    host: janet-ui.apps.dev.cloud.americanfirstfinance.com
+    path: /
+    to:
+        kind: Service
+        name: janet-ui
+---
+apiVersion: networking.k8s.io/v1beta1
+kind: Ingress
+metadata:
+    name: janet-ui-vs
+    namespace: janet
+    annotations:
+        kubernetes.io/ingress.class: 'nginx'
+
+spec:
+    tls:
+        - hosts:
+              - dev-c2s-signature.americanfirstfinance.com
+          secretName: janet-ui-secret
+    rules:
+        - host: dev-c2s-signature.americanfirstfinance.com
+          http:
+              paths:
+                  - path: /
+                    backend:
+                        serviceName: janet-ui
+                        servicePort: 80
